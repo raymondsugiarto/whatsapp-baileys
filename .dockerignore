@@ -1,0 +1,10 @@
+node_modules
+dist
+.env
+*.log
+.git
+.github
+test
+stack.env*
+docker-compose.yml
+README.md

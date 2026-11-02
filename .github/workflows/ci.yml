@@ -1,0 +1,43 @@
+# CI: type-check + unit tests on every push to main/master and every PR.
+# The image build + deploy lives in publish.yml.
+name: ci
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: type-check + test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      # pnpm version comes from "packageManager" in package.json.
+      - name: Install
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+
+      - name: Type-check
+        run: pnpm type-check
+
+      - name: Tests
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build

@@ -1,0 +1,37 @@
+version: "3.7"
+# Portainer stack for receivable-wa (standalone WhatsApp Web / Baileys service).
+# Variables come from the stack environment; template in stack.env.example.
+services:
+  receivable-wa:
+    container_name: receivable-wa
+    hostname: receivable-wa
+    image: ghcr.io/raymondsugiarto/receivable-wa:latest
+    # No `ports:` on purpose: client systems on the `platform` network call
+    # it at http://receivable-wa:4020.
+    environment:
+      - WA_PORT=4020
+      # Same value as WHATSAPP_SIDECAR_SECRET in the receivable-api stack.
+      - WA_SIDECAR_SECRET=${WA_SIDECAR_SECRET}
+      - WA_API_BASE_URL=${WA_API_BASE_URL:-http://receivable-api:4011}
+      # The service's own database ("whatsapp"), not receivable's.
+      # node-postgres reads the PG* variables.
+      - PGHOST=${WA_DATABASE_HOST}
+      - PGPORT=${WA_DATABASE_PORT:-5432}
+      - PGUSER=${WA_DATABASE_USERNAME}
+      - PGPASSWORD=${WA_DATABASE_PASSWORD}
+      - PGDATABASE=${WA_DATABASE_DBNAME:-whatsapp}
+      - WA_DATABASE_SCHEMA=${WA_DATABASE_SCHEMA:-public}
+      - WA_LOG_LEVEL=${WA_LOG_LEVEL:-info}
+    # Exactly one instance: two sidecars on the same WhatsApp login knock
+    # each other off ("connection replaced"), so stop the old one first.
+    deploy:
+      replicas: 1
+      update_config:
+        order: stop-first
+    restart: always
+    networks:
+      - platform
+
+networks:
+  platform:
+    external: true

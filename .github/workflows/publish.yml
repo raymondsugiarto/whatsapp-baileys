@@ -1,0 +1,194 @@
+# ----------------------------------------------------------------------------
+# Publish: build & push the image to ghcr.io, then redeploy the Portainer stack
+# ----------------------------------------------------------------------------
+# Triggers:
+#   * push to main/master       -> <branch>-<sha> + latest, then deploy
+#   * semver tag push (vX.Y.Z)  -> X.Y.Z + X.Y.Z-<sha> (+ latest if highest),
+#                                  then deploy
+#   * pull_request              -> build only, nothing pushed or deployed
+#   * workflow_dispatch         -> sha-<sha>, then deploy
+#
+# Image: ghcr.io/<owner>/receivable-wa (built-in GITHUB_TOKEN, no secret).
+# Deploy secrets (repo → Settings → Secrets and variables → Actions):
+#   PORTAINER_URL, PORTAINER_USERNAME, PORTAINER_PASSWORD,
+#   PORTAINER_STACK_ID (the receivable-wa stack), PORTAINER_ENDPOINT_ID
+# ----------------------------------------------------------------------------
+name: publish
+
+on:
+  push:
+    branches: [main, master]
+    tags: ["v*.*.*"]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository_owner }}/receivable-wa
+
+jobs:
+  build-and-push:
+    name: Build & push image
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve tags
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          short_sha="${GITHUB_SHA::7}"
+
+          # True when $1 (X.Y.Z) is the highest vX.Y.Z tag in the repo.
+          is_highest_semver() {
+            local highest
+            highest=$(git tag --list 'v*.*.*' | sed 's/^v//' \
+              | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
+            [ "$1" = "$highest" ]
+          }
+
+          case "${{ github.event_name }}:${{ github.ref_type }}" in
+            push:branch)
+              branch="${GITHUB_REF#refs/heads/}"
+              tags=("$branch-$short_sha" "latest") ;;
+            push:tag)
+              ver="${GITHUB_REF#refs/tags/v}"
+              tags=("$ver" "$ver-$short_sha")
+              if is_highest_semver "$ver"; then tags+=("latest"); fi ;;
+            pull_request:*) tags=() ;;
+            *) tags=("sha-$short_sha") ;;
+          esac
+
+          # One tag per line (docker/metadata-action reads lines).
+          {
+            echo "tags<<__TAGS__"
+            if [ "${#tags[@]}" -gt 0 ]; then printf '%s\n' "${tags[@]}"; fi
+            echo "__TAGS__"
+          } >> "$GITHUB_OUTPUT"
+          echo "is_pr=$([ "${{ github.event_name }}" = pull_request ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "tags_list=${tags[*]:-}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to ghcr.io
+        if: steps.meta.outputs.is_pr != 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: docker_meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: |
+            org.opencontainers.image.title=receivable-wa
+            org.opencontainers.image.description=WhatsApp Web (Baileys) sidecar for receivable-api
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+
+      - name: Build (and push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: ${{ steps.meta.outputs.is_pr != 'true' }}
+          tags: ${{ steps.docker_meta.outputs.tags }}
+          labels: ${{ steps.docker_meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          load: ${{ steps.meta.outputs.is_pr == 'true' }}
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### 📦 receivable-wa container build"
+            echo "- Trigger: \`${{ github.event_name }}\` (ref: \`${{ github.ref }}\`)"
+            echo "- Tags: \`${{ steps.meta.outputs.tags_list || '(none, PR build only)' }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  deploy:
+    name: Redeploy Portainer stack
+    needs: build-and-push
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    env:
+      PORTAINER_URL: ${{ secrets.PORTAINER_URL }}
+      PORTAINER_USERNAME: ${{ secrets.PORTAINER_USERNAME }}
+      PORTAINER_PASSWORD: ${{ secrets.PORTAINER_PASSWORD }}
+      PORTAINER_STACK_ID: ${{ secrets.PORTAINER_STACK_ID }}
+      PORTAINER_ENDPOINT_ID: ${{ secrets.PORTAINER_ENDPOINT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Redeploy
+        shell: bash
+        run: |
+          set -euo pipefail
+          for v in PORTAINER_URL PORTAINER_USERNAME PORTAINER_PASSWORD PORTAINER_STACK_ID PORTAINER_ENDPOINT_ID; do
+            if [ -z "${!v}" ]; then echo "::error::secret '$v' is empty or undefined"; exit 1; fi
+          done
+
+          # Log in. -k accepts Portainer's self-signed certificate.
+          jq -n --arg u "$PORTAINER_USERNAME" --arg p "$PORTAINER_PASSWORD" \
+            '{username: $u, password: $p}' > "$RUNNER_TEMP/auth.json"
+          RESP=$(curl -sk -w '\n%{http_code}' -X POST -H "Content-Type: application/json" \
+            --data-binary @"$RUNNER_TEMP/auth.json" "$PORTAINER_URL/api/auth")
+          rm -f "$RUNNER_TEMP/auth.json"
+          CODE=$(echo "$RESP" | tail -1)
+          TOKEN=$(echo "$RESP" | sed '$d' | jq -r '.jwt // empty')
+          if [ "$CODE" != "200" ] || [ -z "$TOKEN" ]; then
+            echo "::error::Portainer auth failed (HTTP $CODE)"; exit 1
+          fi
+
+          # Keep the stack's environment variables: Portainer replaces them
+          # with whatever `Env` the update sends. Never echo them (secrets).
+          RESP=$(curl -sk -w '\n%{http_code}' -H "Authorization: Bearer $TOKEN" \
+            "$PORTAINER_URL/api/stacks/$PORTAINER_STACK_ID")
+          CODE=$(echo "$RESP" | tail -1)
+          if [ "$CODE" != "200" ]; then
+            echo "::error::could not read stack $PORTAINER_STACK_ID (HTTP $CODE); not redeploying"; exit 1
+          fi
+          echo "$RESP" | sed '$d' | jq -c '.Env // []' > "$RUNNER_TEMP/env.json"
+          echo "Keeping $(jq length "$RUNNER_TEMP/env.json") stack environment variable(s)."
+
+          jq -n --rawfile compose docker-compose.yml --slurpfile envs "$RUNNER_TEMP/env.json" \
+            '{StackFileContent: $compose, Env: $envs[0], Prune: false, PullImage: true, RepullImageAndRedeploy: true}' \
+            > "$RUNNER_TEMP/redeploy.json"
+
+          RESP=$(curl -sk -w '\n%{http_code}' -X PUT \
+            -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+            --data-binary @"$RUNNER_TEMP/redeploy.json" \
+            "$PORTAINER_URL/api/stacks/$PORTAINER_STACK_ID?endpointId=$PORTAINER_ENDPOINT_ID")
+          rm -f "$RUNNER_TEMP/redeploy.json" "$RUNNER_TEMP/env.json"
+          CODE=$(echo "$RESP" | tail -1)
+          if [ "${CODE:0:1}" != "2" ]; then
+            echo "::error::Portainer redeploy failed (HTTP $CODE): $(echo "$RESP" | sed '$d')"
+            case "$CODE" in
+              401) echo "::error::check PORTAINER_USERNAME / PORTAINER_PASSWORD." ;;
+              403) echo "::error::the user lacks permission to update this stack." ;;
+              404) echo "::error::PORTAINER_STACK_ID or PORTAINER_ENDPOINT_ID does not exist." ;;
+            esac
+            exit 1
+          fi
+          echo "Stack $PORTAINER_STACK_ID redeployed."
