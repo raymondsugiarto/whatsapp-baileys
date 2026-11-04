@@ -2,9 +2,9 @@ version: "3.7"
 # Portainer stack for receivable-wa (standalone WhatsApp Web / Baileys service).
 # Variables come from the stack environment; template in stack.env.example.
 services:
-  receivable-wa:
-    container_name: receivable-wa
-    hostname: receivable-wa
+  whatsapp-baileys:
+    container_name: whatsapp-baileys
+    hostname: whatsapp-baileys
     image: ghcr.io/raymondsugiarto/receivable-wa:latest
     # No `ports:` on purpose: client systems on the `platform` network call
     # it at http://receivable-wa:4020.
@@ -12,7 +12,7 @@ services:
       - WA_PORT=4020
       # Same value as WHATSAPP_SIDECAR_SECRET in the receivable-api stack.
       - WA_SIDECAR_SECRET=${WA_SIDECAR_SECRET}
-      - WA_API_BASE_URL=${WA_API_BASE_URL:-http://receivable-api:4011}
+      - WA_API_BASE_URL=${WA_API_BASE_URL:-http://whatsapp-baileys:4011}
       # The service's own database ("whatsapp"), not receivable's.
       # node-postgres reads the PG* variables.
       - PGHOST=${WA_DATABASE_HOST}
