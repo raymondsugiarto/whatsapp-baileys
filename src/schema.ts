@@ -1,7 +1,7 @@
 import type pg from "pg";
 
 /**
- * The sidecar's own tables, in its own database (WA_DATABASE_URL, e.g. the
+ * The sidecar's own tables, in its own database (WA_DATABASE_*, e.g. the
  * "whatsapp" database). Created on startup; nothing here belongs to any
  * client system.
  *

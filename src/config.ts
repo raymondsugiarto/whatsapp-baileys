@@ -9,15 +9,42 @@ export interface Config {
    * POSTed to <apiBaseUrl>/api/v1/internal/whatsapp/{inbound,status}. */
   apiBaseUrl: string;
   /**
-   * Postgres connection string of the sidecar's OWN database (e.g. the
-   * "whatsapp" database; never a client system's). When unset, the
-   * standard PGHOST / PGPORT / PGUSER / PGPASSWORD / PGDATABASE variables
-   * are used instead (how docker-compose.yml wires it).
+   * Connection to the sidecar's OWN database (e.g. the "whatsapp"
+   * database; never a client system's), passed to pg.Pool. Built from
+   * WA_DATABASE_HOST / _PORT / _USERNAME / _PASSWORD / _DBNAME, or from
+   * WA_DATABASE_URL when that is set instead.
    */
-  databaseUrl: string | undefined;
+  database: DatabaseConfig;
   /** Postgres schema for the sidecar's tables (default public). */
   databaseSchema: string;
   logLevel: string;
+}
+
+export interface DatabaseConfig {
+  connectionString?: string;
+  host?: string;
+  port?: number;
+  user?: string;
+  password?: string;
+  database?: string;
+}
+
+function env(name: string): string | undefined {
+  return process.env[name]?.trim() || undefined;
+}
+
+function loadDatabase(): DatabaseConfig {
+  const url = env("WA_DATABASE_URL");
+  if (url) return { connectionString: url };
+  const host = env("WA_DATABASE_HOST");
+  if (!host) throw new Error("WA_DATABASE_HOST (or WA_DATABASE_URL) is required");
+  return {
+    host,
+    port: Number(env("WA_DATABASE_PORT") ?? 5432),
+    user: required("WA_DATABASE_USERNAME"),
+    password: env("WA_DATABASE_PASSWORD"),
+    database: env("WA_DATABASE_DBNAME") ?? "whatsapp",
+  };
 }
 
 function required(name: string): string {
@@ -27,16 +54,12 @@ function required(name: string): string {
 }
 
 export function loadConfig(): Config {
-  const databaseUrl = process.env.WA_DATABASE_URL?.trim() || undefined;
-  if (!databaseUrl && !process.env.PGHOST?.trim()) {
-    throw new Error("WA_DATABASE_URL (or PGHOST and friends) is required");
-  }
   return {
     port: Number(process.env.WA_PORT ?? 4020),
     host: process.env.WA_HOST ?? "0.0.0.0",
     secret: required("WA_SIDECAR_SECRET"),
     apiBaseUrl: required("WA_API_BASE_URL").replace(/\/+$/, ""),
-    databaseUrl,
+    database: loadDatabase(),
     databaseSchema: process.env.WA_DATABASE_SCHEMA?.trim() || "public",
     logLevel: process.env.WA_LOG_LEVEL ?? "info",
   };

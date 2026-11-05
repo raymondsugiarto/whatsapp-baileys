@@ -7,7 +7,7 @@
  *   WA_COPY_FROM_SCHEMA=receivable \
  *   pnpm copy-auth
  *
- * Reads the target from WA_DATABASE_URL / WA_DATABASE_SCHEMA like the
+ * Reads the target from the WA_DATABASE_* variables like the
  * sidecar. Safe to run again (upsert); the source rows are left as they are.
  * Stop the old sidecar first so it does not keep writing to the old copy.
  */
@@ -25,7 +25,7 @@ async function main() {
   if (!ident.test(fromSchema) || !ident.test(cfg.databaseSchema)) throw new Error("schema name is invalid");
 
   const from = new pg.Client({ connectionString: fromUrl, options: `-c search_path=${fromSchema}` });
-  const to = new pg.Pool({ connectionString: cfg.databaseUrl, options: `-c search_path=${cfg.databaseSchema}` });
+  const to = new pg.Pool({ ...cfg.database, options: `-c search_path=${cfg.databaseSchema}` });
   await from.connect();
   try {
     await ensureSchema(to);

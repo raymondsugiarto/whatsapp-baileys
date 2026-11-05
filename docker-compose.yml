@@ -14,12 +14,11 @@ services:
       - WA_SIDECAR_SECRET=${WA_SIDECAR_SECRET}
       - WA_API_BASE_URL=${WA_API_BASE_URL:-http://whatsapp-baileys:4011}
       # The service's own database ("whatsapp"), not receivable's.
-      # node-postgres reads the PG* variables.
-      - PGHOST=${WA_DATABASE_HOST}
-      - PGPORT=${WA_DATABASE_PORT:-5432}
-      - PGUSER=${WA_DATABASE_USERNAME}
-      - PGPASSWORD=${WA_DATABASE_PASSWORD}
-      - PGDATABASE=${WA_DATABASE_DBNAME:-whatsapp}
+      - WA_DATABASE_HOST=${WA_DATABASE_HOST}
+      - WA_DATABASE_PORT=${WA_DATABASE_PORT:-5432}
+      - WA_DATABASE_USERNAME=${WA_DATABASE_USERNAME}
+      - WA_DATABASE_PASSWORD=${WA_DATABASE_PASSWORD}
+      - WA_DATABASE_DBNAME=${WA_DATABASE_DBNAME:-whatsapp}
       - WA_DATABASE_SCHEMA=${WA_DATABASE_SCHEMA:-public}
       - WA_LOG_LEVEL=${WA_LOG_LEVEL:-info}
     # Exactly one instance: two sidecars on the same WhatsApp login knock

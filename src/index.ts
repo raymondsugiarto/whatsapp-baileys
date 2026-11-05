@@ -11,7 +11,7 @@ const log = pino({ level: cfg.logLevel, base: { service: "receivable-wa" } });
 
 if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(cfg.databaseSchema)) throw new Error("WA_DATABASE_SCHEMA is invalid");
 const pool = new pg.Pool({
-  connectionString: cfg.databaseUrl,
+  ...cfg.database,
   max: 10,
   // The sidecar's own database (src/schema.ts); public unless set.
   options: `-c search_path=${cfg.databaseSchema}`,
